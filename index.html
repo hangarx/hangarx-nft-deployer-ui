@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>NFT Marketplace</title>
+  </head>
+  <body>
+    TON Wallet Chrome Extension 1.1.34+ required.
+
+    <button id="createCollectionButton">Create Collection</button>
+    <button id="createNftButton">Create NFT</button>
+
+    <button id="getInfo">get NFT info</button>
+    <div id="info"></div>
+    <script src="./tonweb.js"></script>
+    <script>
+      const $ = (selector) => document.querySelector(selector);
+
+      // BLOCKCHAIN
+
+      const { NftCollection, NftItem, NftMarketplace, NftSale } =
+        TonWeb.token.nft;
+
+      const tonweb = new TonWeb(
+        new TonWeb.HttpProvider(
+          "https://testnet.toncenter.com/api/v2/jsonRPC",
+          {
+            apiKey:
+              "api_key",
+          }
+        )
+      );
+
+      const init = async () => {
+        if (!window.tonProtocolVersion || window.tonProtocolVersion < 1) {
+          alert("Please update your TON Wallet Extension");
+          return;
+        }
+
+        const provider = window.ton;
+
+        const accounts = await provider.send("ton_requestWallets");
+        const walletAddress = new TonWeb.utils.Address(accounts[0].address);
+        console.log(
+          "wallet address=",
+          walletAddress.toString(true, true, true)
+        );
+
+        let wallet = tonweb.wallet.create({
+          address: walletAddress.toString(true, true, true),
+        });
+
+        const collectionNftAddress = new TonWeb.utils.Address(
+          "EQAQkywoi_WAH-y-W39d7SBN2ahd3lFifJJ6g7KndmclQJAm"
+        );
+        const contract = new tonweb.Contract(provider, {
+          address: collectionNftAddress,
+        });
+
+        const nftCollection = new NftCollection(tonweb.provider, {
+          address: collectionNftAddress,
+          // ownerAddress: walletAddress,
+          // royaltyPercent: 0.05,
+          // royaltyAddress: walletAddress,
+          // nextItemIndex: 5,
+          // collectionContentUrl:
+          //   "https://gateway.pinata.cloud/ipfs/QmPzazZ1Dupzw5czVAsLCwp3rCyhER5LSkQP4U8SqK4zG4/collection.json",
+          // commonContentUrl:
+          //   "https://gateway.pinata.cloud/ipfs/QmYbwKKaTnEXhsqSMx7rPNxW89i4d5kHm8FLJFRE5nn16j/",
+          // nftItemCodeHex: NftItem.codeHex,
+        });
+        const nftCollectionAddress = await nftCollection.getAddress();
+        console.log(nftCollection);
+        console.log(
+          "collection address=",
+          nftCollectionAddress.toString(true, true, true)
+        );
+
+        const deployNftCollection = async () => {
+          const stateInit = (await nftCollection.createStateInit()).stateInit;
+          const stateInitBoc = await stateInit.toBoc(false);
+          const stateInitBase64 = TonWeb.utils.bytesToBase64(stateInitBoc);
+          console.log("state - init :: ", stateInitBoc);
+          console.log("state - init :: ", stateInitBase64);
+          provider.send("ton_sendTransaction", [
+            {
+              to: nftCollectionAddress.toString(true, true, true),
+              value: TonWeb.utils.toNano(0.05).toString(),
+              stateInit: stateInitBase64,
+              dataType: "boc",
+            },
+          ]);
+        };
+
+        const deployNftItem = async () => {
+          const amount = TonWeb.utils.toNano(0.2);
+
+          const body = await nftCollection.createMintBody({
+            amount: amount,
+            itemOwnerAddress: walletAddress,
+            itemIndex: 0,
+            itemContentUri: "meta.json",
+          });
+
+          const bodyBoc = await body.toBoc(false);
+          const bodyBase64 = TonWeb.utils.bytesToBase64(bodyBoc);
+          console.log("body:", bodyBoc);
+          console.log("body:", bodyBase64);
+
+          const res = await provider.send("ton_sendTransaction", [
+            {
+              //   to: "EQBcQFW7vD93B8GBOmwKOHts2PbYFOw9PDdSvpj7JYl_6k85",
+              to: nftCollectionAddress.toString(true, true, true),
+              value: amount.toString(),
+              data: bodyBase64,
+              dataType: "boc",
+            },
+          ]);
+          console.log("Wait 15s");
+          const sleep = async () =>
+            new Promise((resolve) =>
+              setTimeout(() => {
+                resolve(1);
+              }, 15 * 1000)
+            );
+
+          await sleep();
+
+          const info = await getInfo();
+          console.log(info);
+        };
+
+        const getInfo = async () => {
+          const data = await nftCollection.getCollectionData();
+          data.ownerAddress = data.ownerAddress.toString(true, true, true);
+          console.log(data);
+          const royaltyParams = await nftCollection.getRoyaltyParams();
+          royaltyParams.royaltyAddress = royaltyParams.royaltyAddress.toString(
+            true,
+            true,
+            true
+          );
+          console.log(royaltyParams);
+          const nftItemAddress0 = (
+            await nftCollection.getNftItemAddressByIndex(
+              data?.nextItemIndex - 1
+            )
+          ).toString(true, true, true);
+          console.log(nftItemAddress0);
+
+          const nftItem = new NftItem(tonweb.provider, {
+            address: nftItemAddress0,
+          });
+          const nftData = await nftCollection.methods.getNftItemContent(
+            nftItem
+          );
+          nftData.collectionAddress = nftData.collectionAddress.toString(
+            true,
+            true,
+            true
+          );
+          nftData.ownerAddress = nftData.ownerAddress?.toString(
+            true,
+            true,
+            true
+          );
+          console.log(nftData);
+          document.getElementById("info").innerText = JSON.stringify(
+            nftData,
+            null,
+            4
+          );
+
+          return nftData;
+        };
+
+        // BUTTONS
+
+        $("#createCollectionButton").addEventListener("click", async () => {
+          // 1. make Metadata JSON from user's inputs
+          // 2. host Metadata JSON and content files on marketplace side (like my_collection.json)
+          // 3. deploy NFT Collection smart contract with URI setted to this Metadata JSON file
+
+          await deployNftCollection();
+        });
+
+        $("#createNftButton").addEventListener("click", async () => {
+          // 1. make Metadata JSON from user's inputs
+          // 2. host Metadata JSON and content files on marketplace side (like my_nft.json)
+          // 3. mint NFT smart contract with URI setted to this Metadata JSON file by invoking collection smart contract
+
+          await deployNftItem();
+        });
+
+        $("#getInfo").addEventListener("click", async () => {
+          try {
+            await getInfo();
+          } catch (e) {}
+        });
+      };
+
+      if (window.ton) {
+        init();
+      } else {
+        window.addEventListener("tonready", () => init(), false);
+      }
+    </script>
+  </body>
+</html>
